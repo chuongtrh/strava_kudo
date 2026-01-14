@@ -1,44 +1,44 @@
 # Strava Kudo All
 
-Chrome extension để tự động kudo tất cả các hoạt động trên Strava dashboard.
+Chrome extension to automatically kudo all activities on the Strava dashboard.
 
-## Tính năng
+## Features
 
-- ✅ Thêm nút "Kudo All" vào header của Strava
-- ✅ Tự động kudo tất cả activities hiển thị trên trang hiện tại
-- ✅ Chỉ kudo những activity chưa được kudo (bỏ qua những activity đã kudo)
-- ✅ Hiển thị thông báo số lượng activity đã kudo
-- ✅ Không cần scroll hoặc load thêm - chỉ kudo những gì đang hiển thị
+- ✅ Adds a "Kudo All" button to the Strava header
+- ✅ Automatically kudos all activities visible on the current page
+- ✅ Only kudos activities that haven't been kudoed yet (skips already kudoed ones)
+- ✅ Displays a notification with the number of activities kudoed
+- ✅ No auto-scroll or loading - only kudos what is currently visible
 
-## Cài đặt
+## Installation
 
-1. Tải hoặc clone repository này
-2. Mở Chrome và truy cập `chrome://extensions/`
-3. Bật "Developer mode" (góc trên bên phải)
+1. Download or clone this repository
+2. Open Chrome and go to `chrome://extensions/`
+3. Enable "Developer mode" (top right corner)
 4. Click "Load unpacked"
-5. Chọn thư mục `strava_kudo`
+5. Select the `strava_kudo` directory
 
-## Sử dụng
+## Usage
 
-1. Truy cập https://www.strava.com/dashboard
-2. Nhấn vào nút "Kudo All" trên header
-3. Extension sẽ tự động kudo tất cả activities chưa được kudo
-4. Thông báo sẽ hiển thị số lượng activity đã kudo
+1. Go to https://www.strava.com/dashboard
+2. Click the "Kudo All" button in the header
+3. The extension will automatically kudo all unkudoed activities
+4. A notification will show the count of activities kudoed
 
-## Cấu trúc
+## Structure
 
 ```
 strava_kudo/
-├── manifest.json       # Cấu hình extension
-├── content.js          # Logic chính
-├── styles.css          # Giao diện
+├── manifest.json       # Extension configuration
+├── content.js          # Main logic
+├── styles.css          # Styles
 ├── icon16.png          # Icon 16x16
 ├── icon48.png          # Icon 48x48
 └── icon128.png         # Icon 128x128
 ```
 
-## Lưu ý
+## Notes
 
-- Extension chỉ hoạt động trên trang dashboard của Strava
-- Chỉ kudo những activity hiển thị trên trang hiện tại (không tự động scroll)
-- Có delay nhỏ giữa các lần kudo để tránh rate limiting
+- The extension only works on the Strava dashboard page
+- Only kudos activities visible on the current page (does not auto-scroll)
+- Includes a small delay between kudos to avoid rate limiting

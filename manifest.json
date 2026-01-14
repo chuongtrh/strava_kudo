@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Strava Kudo All",
+  "version": "1.0.0",
+  "description": "Automatically give kudos to all activities on your Strava dashboard",
+  "permissions": [],
+  "host_permissions": [
+    "https://www.strava.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://www.strava.com/dashboard*"],
+      "js": ["content.js"],
+      "css": ["styles.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}

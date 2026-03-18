@@ -9,7 +9,7 @@
   ],
   "content_scripts": [
     {
-      "matches": ["https://www.strava.com/dashboard*"],
+      "matches": ["https://www.strava.com/dashboard*", "https://www.strava.com/athletes/*"],
       "js": ["content.js"],
       "css": ["styles.css"],
       "run_at": "document_idle"

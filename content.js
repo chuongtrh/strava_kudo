@@ -47,17 +47,18 @@
 
     // Wait for page to be fully loaded
     function init() {
-        // Check if we're on the dashboard
-        if (!window.location.pathname.includes('/dashboard')) {
-            return;
+        if (window.location.pathname.includes('/dashboard')) {
+            // Wait a bit for Strava's dynamic content to load
+            setTimeout(() => {
+                createKudoButton();
+                injectIgnoreButtonsToExisting();
+                setupMutationObserver();
+            }, 1000);
+        } else if (window.location.pathname.includes('/athletes/')) {
+            setTimeout(() => {
+                createProfileKudoButton();
+            }, 1000);
         }
-
-        // Wait a bit for Strava's dynamic content to load
-        setTimeout(() => {
-            createKudoButton();
-            injectIgnoreButtonsToExisting();
-            setupMutationObserver();
-        }, 1000);
     }
 
     // Observe dashboard for new activities
@@ -477,6 +478,227 @@
       </svg>
       <span>Kudo All</span>
     `;
+    }
+
+    // Create and inject "Kudo All" button on athlete profile page
+    function createProfileKudoButton() {
+        if (document.getElementById('profile-kudo-all-btn')) return;
+
+        const kudoBtn = document.createElement('button');
+        kudoBtn.id = 'profile-kudo-all-btn';
+        kudoBtn.className = 'kudo-all-button profile-kudo-btn';
+        kudoBtn.innerHTML = `
+            <svg class="kudo-icon" viewBox="0 0 24 24" width="16" height="16" style="margin-right: 6px;">
+                <path fill="currentColor" d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
+            </svg>
+            <span>Kudo All 🔥</span>
+        `;
+
+        // Add styling suitable for profile page
+        kudoBtn.style.padding = '8px 16px';
+        kudoBtn.style.background = '#fc4c02';
+        kudoBtn.style.color = '#fff';
+        kudoBtn.style.borderRadius = '4px';
+        kudoBtn.style.fontWeight = 'bold';
+        kudoBtn.style.boxShadow = '0 2px 4px rgba(0,0,0,0.1)';
+        kudoBtn.style.transition = 'all 0.2s ease';
+        kudoBtn.style.border = 'none';
+        kudoBtn.style.cursor = 'pointer';
+
+        kudoBtn.onmouseover = () => { kudoBtn.style.background = '#e34402'; };
+        kudoBtn.onmouseout = () => { kudoBtn.style.background = '#fc4c02'; };
+        kudoBtn.onclick = kudoAthleteActivities;
+
+        // Strategy to place button next to follow action OR athlete name
+        let inserted = false;
+
+        // 1. Try to find the Follow/Following buttons
+        const allButtons = Array.from(document.querySelectorAll('button'));
+        const actionButton = allButtons.find(b => {
+            const text = b.textContent.trim().toLowerCase();
+            return text === 'following' || text === 'follow' || text === 'request to follow';
+        });
+
+        if (actionButton) {
+            // Usually the follow button is in a group or flex container
+            // Let's go up its parent tree to find that small inline container
+            let container = actionButton.parentElement;
+            if (container && container.tagName === 'DIV' && container.childNodes.length > 1) {
+                // that's probably the button group
+            } else if (container && container.parentElement && container.parentElement.tagName === 'DIV') {
+                container = container.parentElement;
+            }
+
+            const wrapper = document.createElement('div');
+            wrapper.style.display = 'inline-block';
+            wrapper.style.marginLeft = '12px';
+            wrapper.style.verticalAlign = 'top';
+            wrapper.appendChild(kudoBtn);
+
+            container.insertAdjacentElement('afterend', wrapper);
+            inserted = true;
+            console.log('Strava Kudo All: Inserted near follow action');
+        }
+
+        // 2. Try to find the H1 (athlete name)
+        if (!inserted) {
+            const h1 = document.querySelector('h1');
+            if (h1) {
+                const wrapper = document.createElement('div');
+                wrapper.style.marginTop = '12px';
+                wrapper.style.marginBottom = '12px';
+                wrapper.appendChild(kudoBtn);
+
+                h1.insertAdjacentElement('afterend', wrapper);
+                inserted = true;
+                console.log('Strava Kudo All: Inserted below athlete name H1');
+            }
+        }
+
+        // 3. Fallback: try different profile containers
+        if (!inserted) {
+            const possibleContainers = [
+                '.profile-heading',
+                '.profile-details',
+                '.row.profile-wrapper',
+                '#profile-sidebar',
+                '.col-md-3.sidebar',
+            ];
+
+            for (const sel of possibleContainers) {
+                const container = document.querySelector(sel);
+                if (container) {
+                    container.insertAdjacentElement('afterbegin', kudoBtn);
+                    inserted = true;
+                    console.log('Strava Kudo All: Found profile container:', sel);
+                    break;
+                }
+            }
+        }
+
+        // 4. Ultimate fallback: fixed on screen
+        if (!inserted) {
+            kudoBtn.style.position = 'fixed';
+            kudoBtn.style.bottom = '20px';
+            kudoBtn.style.right = '20px';
+            kudoBtn.style.zIndex = '9999';
+            kudoBtn.style.boxShadow = '0 4px 12px rgba(0,0,0,0.2)';
+            document.body.appendChild(kudoBtn);
+            console.log('Strava Kudo All: Appended to body as fallback');
+        }
+    }
+
+    async function kudoAthleteActivities() {
+        const button = document.getElementById('profile-kudo-all-btn');
+        if (!button) return;
+
+        button.disabled = true;
+        button.style.background = '#ccc';
+        button.style.cursor = 'not-allowed';
+        button.innerHTML = '<span>Processing... Scrolling feed...</span>';
+
+        try {
+            // Step 1: Scroll to load activities
+            let noNewContentCount = 0;
+            let lastHeight = 0;
+
+            // Scroll max 10 times to find activities. 
+            // In Strava profile, scrolling auto-loads older entries.
+            for (let i = 0; i < 10; i++) {
+                window.scrollTo(0, document.body.scrollHeight);
+                await sleep(1500); // give it time to fetch and render
+
+                const newHeight = document.body.scrollHeight;
+                if (newHeight === lastHeight) {
+                    noNewContentCount++;
+                    if (noNewContentCount >= 2) break; // Reached bottom or no new content
+                } else {
+                    noNewContentCount = 0;
+                    lastHeight = newHeight;
+                }
+            }
+
+            // Scroll back top
+            window.scrollTo(0, 0);
+            await sleep(500);
+
+            // Step 2: Find kudos
+            const kudoButtons = findKudoButtons();
+
+            if (kudoButtons.length === 0) {
+                showNotification('No activities found to kudo', 'info');
+                resetProfileButton(button);
+                return;
+            }
+
+            // Filter out already kudoed
+            const unkudoedButtons = kudoButtons.filter(btn => !isAlreadyKudoed(btn));
+
+            // Filter for current month using 'time' tag
+            const finalButtons = [];
+            const currentMonthIndex = new Date().getMonth();
+            const currentYear = new Date().getFullYear();
+
+            for (const btn of unkudoedButtons) {
+                const activityEntry = btn.closest('[data-testid="web-feed-entry"], .activity');
+                if (activityEntry) {
+                    const timeEl = activityEntry.querySelector('time');
+                    if (timeEl) {
+                        const datetime = timeEl.getAttribute('datetime'); // e.g., "2026-03-15T04:16:44Z"
+                        if (datetime) {
+                            const dateObj = new Date(datetime);
+                            if (dateObj.getMonth() === currentMonthIndex && dateObj.getFullYear() === currentYear) {
+                                finalButtons.push(btn);
+                            }
+                            continue;
+                        }
+                    }
+                }
+                // If we can't parse or find time, we include cautiously.
+                finalButtons.push(btn);
+            }
+
+            if (finalButtons.length === 0) {
+                showNotification('All activities in the current month already have kudos! 🏁', 'success');
+                resetProfileButton(button);
+                return;
+            }
+
+            // Step 3: Give Kudos with Delay
+            let kudoCount = 0;
+            for (const btn of finalButtons) {
+                try {
+                    btn.click();
+                    kudoCount++;
+                    button.innerHTML = `<span>Kudoing... (${kudoCount}/${finalButtons.length})</span>`;
+
+                    // Delay 1-2 seconds (randomized like human)
+                    const delay = Math.floor(Math.random() * 1000) + 1000;
+                    await sleep(delay);
+                } catch (error) {
+                    console.error('Error giving kudo:', error);
+                }
+            }
+
+            showNotification(`Successfully gave kudos to ${kudoCount} activities! 🎉`, 'success');
+        } catch (error) {
+            console.error('Strava Kudo All error:', error);
+            showNotification('An error occurred. Please try again.', 'error');
+        } finally {
+            resetProfileButton(button);
+        }
+    }
+
+    function resetProfileButton(button) {
+        button.disabled = false;
+        button.style.background = '#fc4c02';
+        button.style.cursor = 'pointer';
+        button.innerHTML = `
+            <svg class="kudo-icon" viewBox="0 0 24 24" width="16" height="16" style="margin-right: 6px;">
+                <path fill="currentColor" d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
+            </svg>
+            <span>Kudo All 🔥</span>
+        `;
     }
 
     // Helper function for delays

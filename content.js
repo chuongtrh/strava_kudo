@@ -743,27 +743,33 @@
             isPrivate = true;
         }
 
-        // Strategy 1: DOMParser
+        // Strategy 1: DOMParser for all stats and tables
         try {
             const parser = new DOMParser();
             const doc = parser.parseFromString(html, 'text/html');
 
-            const statItems = doc.querySelectorAll('.inline-stats li, [data-testid="inline-stats"] li, .activity-stats li');
+            const statItems = doc.querySelectorAll('.inline-stats li, [data-testid*="stat"], .activity-stats li, .more-stats .stat, .more-stats tr, .more-stats li, tr, [class*="stat"]');
             if (statItems.length > 0) {
                 statItems.forEach(item => {
-                    const subheadEl = item.querySelector('.stat-subhead, [class*="subhead"], [class*="label"]');
+                    const subheadEl = item.querySelector('.stat-subhead, [class*="subhead"], [class*="label"], th');
                     const subhead = (subheadEl ? subheadEl.textContent : '').trim().toLowerCase();
-                    const valEl = item.querySelector('.stat-value, strong, [class*="value"]');
+                    const valEl = item.querySelector('.stat-value, strong, [class*="value"], td');
                     if (valEl) {
                         const text = valEl.textContent.trim().replace(/\s+/g, ' ');
-                        if (subhead.includes('distance') || subhead.includes('khoảng cách')) {
+                        if (!distance && (subhead.includes('distance') || subhead.includes('khoảng cách'))) {
                             distance = text;
-                        } else if (subhead.includes('pace') || subhead.includes('tốc độ')) {
+                        } else if (!pace && (subhead.includes('pace') || subhead.includes('tốc độ'))) {
                             pace = text;
-                        } else if (subhead.includes('time') || subhead.includes('thời gian')) {
+                        } else if (!time && (subhead.includes('time') || subhead.includes('thời gian'))) {
                             time = text;
-                        } else if (subhead.includes('heart rate') || subhead.includes('nhịp tim') || text.includes('bpm')) {
-                            hr = text;
+                        } else if (!hr && (subhead.includes('heart rate') || subhead.includes('avg hr') || subhead.includes('nhịp tim') || (text.includes('bpm') && !subhead.includes('max')))) {
+                            const bpmMatch = text.match(/(\d{2,3})\s*(?:bpm)?/i);
+                            if (bpmMatch) {
+                                const val = parseInt(bpmMatch[1], 10);
+                                if (val >= 40 && val <= 240) {
+                                    hr = val + ' bpm';
+                                }
+                            }
                         }
                     }
                 });
@@ -773,41 +779,75 @@
         }
 
         // Strategy 2: Next.js script data
-        if (!distance || !pace) {
-            try {
-                const nextDataMatch = html.match(/<script[^>]*id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/);
-                if (nextDataMatch && nextDataMatch[1]) {
-                    const json = JSON.parse(nextDataMatch[1]);
-                    const act = json?.props?.pageProps?.activity;
-                    if (act) {
-                        if (act.distance && !distance) {
-                            distance = (act.distance / 1000).toFixed(2) + ' km';
-                        }
-                        if (act.moving_time && !time) {
-                            const mins = Math.floor(act.moving_time / 60);
-                            const secs = Math.floor(act.moving_time % 60);
-                            time = mins >= 60
-                                ? `${Math.floor(mins / 60)}h ${mins % 60}m`
-                                : `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+        try {
+            const nextDataMatch = html.match(/<script[^>]*id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/);
+            if (nextDataMatch && nextDataMatch[1]) {
+                const json = JSON.parse(nextDataMatch[1]);
+                const act = json?.props?.pageProps?.activity;
+                if (act) {
+                    if (act.distance && !distance) {
+                        distance = (act.distance / 1000).toFixed(2) + ' km';
+                    }
+                    if (act.moving_time && !time) {
+                        const mins = Math.floor(act.moving_time / 60);
+                        const secs = Math.floor(act.moving_time % 60);
+                        time = mins >= 60
+                            ? `${Math.floor(mins / 60)}h ${mins % 60}m`
+                            : `${mins}:${secs < 10 ? '0' : ''}${secs}`;
 
-                            if (act.distance && act.distance > 0 && !pace) {
-                                const paceSecsPerKm = act.moving_time / (act.distance / 1000);
-                                const pMin = Math.floor(paceSecsPerKm / 60);
-                                const pSec = Math.floor(paceSecsPerKm % 60);
-                                pace = `${pMin}:${pSec < 10 ? '0' : ''}${pSec} /km`;
-                            }
+                        if (act.distance && act.distance > 0 && !pace) {
+                            const paceSecsPerKm = act.moving_time / (act.distance / 1000);
+                            const pMin = Math.floor(paceSecsPerKm / 60);
+                            const pSec = Math.floor(paceSecsPerKm % 60);
+                            pace = `${pMin}:${pSec < 10 ? '0' : ''}${pSec} /km`;
                         }
-                        if (act.average_heartrate && !hr) {
-                            hr = `${Math.round(act.average_heartrate)} bpm`;
+                    }
+                    if (act.average_heartrate && !hr) {
+                        const val = parseFloat(act.average_heartrate);
+                        if (val >= 40 && val <= 240) {
+                            hr = `${Math.round(val)} bpm`;
                         }
                     }
                 }
-            } catch (e) {
-                // ignore
+            }
+        } catch (e) {
+            // ignore
+        }
+
+        // Strategy 3: Check JSON fields in any inline scripts (desktop Rails/React app)
+        if (!hr) {
+            const hrJsonMatch = html.match(/["'\\]*(?:average_heartrate|avg_hr|averageHeartRate|avgHeartRate)["'\\]*\s*:\s*([0-9.]+)/i);
+            if (hrJsonMatch) {
+                const val = parseFloat(hrJsonMatch[1]);
+                if (val >= 40 && val <= 240) {
+                    hr = `${Math.round(val)} bpm`;
+                }
             }
         }
 
-        // Strategy 3: Regex fallback on <li> blocks
+        // Strategy 4: HTML label search for Heart Rate / Avg HR / Nhịp tim
+        if (!hr) {
+            const hrLabelMatch = html.match(/(?:avg\s*)?(?:heart\s*rate|nhịp\s*tim|avg\s*hr)[\s\S]{0,100}?(\d{2,3})\s*(?:<abbr[^>]*>)?\s*(?:bpm)?/i);
+            if (hrLabelMatch) {
+                const val = parseInt(hrLabelMatch[1], 10);
+                if (val >= 40 && val <= 240) {
+                    hr = `${val} bpm`;
+                }
+            }
+        }
+
+        // Strategy 5: Standalone bpm text in HTML
+        if (!hr) {
+            const bpmMatch = html.match(/(\d{2,3})\s*(?:<[^>]+>)*\s*bpm\b/i);
+            if (bpmMatch) {
+                const val = parseInt(bpmMatch[1], 10);
+                if (val >= 40 && val <= 240) {
+                    hr = `${val} bpm`;
+                }
+            }
+        }
+
+        // Strategy 6: Regex fallback for distance, pace, time if still missing
         if (!distance || !pace) {
             const liRegex = /<li[^>]*>([\s\S]*?)<\/li>/gi;
             let match;
@@ -828,8 +868,6 @@
                         pace = fullVal;
                     } else if (!time && (subhead.includes('time') || subhead.includes('thời gian'))) {
                         time = fullVal;
-                    } else if (!hr && (subhead.includes('heart rate') || subhead.includes('nhịp tim') || unit.toLowerCase() === 'bpm')) {
-                        hr = fullVal;
                     }
                 }
             }
@@ -926,12 +964,18 @@
             return;
         }
 
-        if (document.getElementById('kudo-load-group-stats-btn')) {
+        const modal = findOtherAthletesModal();
+        if (!modal) {
             return;
         }
 
-        const modal = findOtherAthletesModal();
-        if (!modal) {
+        // Clean up any old wrapper attached directly to modal top
+        const existingWrapper = modal.querySelector('#kudo-group-stats-btn-wrapper');
+        if (existingWrapper && existingWrapper.parentElement === modal) {
+            existingWrapper.remove();
+        }
+
+        if (document.getElementById('kudo-load-group-stats-btn')) {
             return;
         }
 
@@ -952,11 +996,11 @@
             return;
         }
 
-        console.log('[Strava Kudo All] Detected Other Athletes modal! Athletes count:', otherAthletesLinks.length);
-
-        if (modal.querySelector('#kudo-group-stats-btn-wrapper')) {
+        if (otherAthletesLinks.length === 0) {
             return;
         }
+
+        console.log('[Strava Kudo All] Detected Other Athletes modal! Athletes count:', otherAthletesLinks.length);
 
         // Auto-render cached athletes
         otherAthletesLinks.forEach(link => {
@@ -969,39 +1013,22 @@
             }
         });
 
-        // Determine insertion point
-        let listContainer = null;
-        if (otherAthletesLinks.length >= 2) {
-            let ancestor = otherAthletesLinks[0].parentElement;
-            while (ancestor && ancestor !== modal && !ancestor.contains(otherAthletesLinks[1])) {
-                ancestor = ancestor.parentElement;
-            }
-            listContainer = ancestor;
-        } else if (otherAthletesLinks.length === 1) {
-            listContainer = otherAthletesLinks[0].closest('ul, ol') || otherAthletesLinks[0].parentElement.parentElement;
-        }
-
         const btnContainer = document.createElement('div');
         btnContainer.id = 'kudo-group-stats-btn-wrapper';
         btnContainer.className = 'kudo-group-stats-btn-wrapper';
-        btnContainer.style.display = 'flex';
-        btnContainer.style.justifyContent = 'center';
-        btnContainer.style.alignItems = 'center';
-        btnContainer.style.padding = '10px 16px';
-        btnContainer.style.margin = '8px 16px';
-        btnContainer.style.background = '#fff8f5';
-        btnContainer.style.border = '1px solid #ffccb8';
-        btnContainer.style.borderRadius = '8px';
+
+        const titleSpan = document.createElement('span');
+        titleSpan.className = 'kudo-group-stats-title';
+        titleSpan.textContent = `Other Athletes (${otherAthletesLinks.length})`;
 
         const statsBtn = document.createElement('button');
         statsBtn.id = 'kudo-load-group-stats-btn';
         statsBtn.className = 'kudo-group-stats-btn';
-        statsBtn.style.margin = '0';
         statsBtn.innerHTML = `
             <svg class="kudo-icon" viewBox="0 0 24 24" width="16" height="16">
                 <path fill="currentColor" d="M13 2.05v3.03c3.39.49 6 3.39 6 6.92 0 .9-.18 1.75-.48 2.54l2.6 1.53c.56-1.24.88-2.62.88-4.07 0-5.18-3.95-9.45-9-9.95zM12 19c-3.87 0-7-3.13-7-7 0-3.53 2.61-6.43 6-6.92V2.05c-5.06.5-9 4.76-9 9.95 0 5.52 4.47 10 9.99 10 3.31 0 6.24-1.61 8.01-4.09l-2.45-1.45C16.3 17.8 14.28 19 12 19z"/>
             </svg>
-            <span>⚡ Tải thông số bài chạy (${otherAthletesLinks.length > 0 ? otherAthletesLinks.length + ' athletes' : 'Tất cả'})</span>
+            <span>⚡ Load Athlete Stats</span>
         `;
 
         statsBtn.onclick = (e) => {
@@ -1010,27 +1037,32 @@
             loadGroupAthletesStats(modal, statsBtn);
         };
 
+        btnContainer.appendChild(titleSpan);
         btnContainer.appendChild(statsBtn);
 
-        // Insert before listContainer or right below tabs
-        if (listContainer && listContainer !== modal && listContainer.parentElement) {
-            listContainer.parentElement.insertBefore(btnContainer, listContainer);
-        } else {
-            const tabsNav = Array.from(modal.querySelectorAll('nav, [role="tablist"], div')).find(el => {
-                return Array.from(el.querySelectorAll('*')).some(c => c.textContent.trim().toLowerCase() === 'other athletes');
-            });
-            if (tabsNav && tabsNav.nextSibling) {
-                tabsNav.parentElement.insertBefore(btnContainer, tabsNav.nextSibling);
-            } else {
-                modal.prepend(btnContainer);
-            }
+        // Insert neatly right before the first athlete row
+        const firstLink = otherAthletesLinks[0];
+        const firstRow = firstLink.closest('li, [class*="athlete"], [class*="item"], [class*="row"]')
+            || firstLink.parentElement.parentElement;
+
+        if (firstRow && firstRow.parentElement) {
+            firstRow.parentElement.insertBefore(btnContainer, firstRow);
+        } else if (firstLink.parentElement) {
+            firstLink.parentElement.insertBefore(btnContainer, firstLink);
         }
 
-        console.log('[Strava Kudo All] Injected group stats button successfully!');
+        console.log('[Strava Kudo All] Injected group stats button successfully before first athlete!');
     }
 
     async function loadGroupAthletesStats(modal, statsBtn) {
         if (!statsBtn) return;
+
+        // Check if user clicked Refresh to force re-fetch
+        const isForceRefresh = (statsBtn.textContent || '').toLowerCase().includes('refresh');
+        if (isForceRefresh) {
+            groupStatsCache.clear();
+        }
+
         statsBtn.disabled = true;
 
         const currentActivityId = extractActivityId(window.location.pathname);
@@ -1042,7 +1074,7 @@
 
         if (links.length === 0) {
             statsBtn.disabled = false;
-            showNotification('Không tìm thấy liên kết bài chạy nào trong nhóm', 'info');
+            showNotification('No athlete activities found in group', 'info');
             return;
         }
 
@@ -1071,7 +1103,7 @@
 
         for (let i = 0; i < uncachedItems.length; i++) {
             const item = uncachedItems[i];
-            statsBtn.innerHTML = `<span>⏳ Đang tải thông số... (${processedCount + 1}/${athleteItems.length})</span>`;
+            statsBtn.innerHTML = `<span>⏳ Loading Stats... (${processedCount + 1}/${athleteItems.length})</span>`;
 
             try {
                 const res = await fetch(`/activities/${item.actId}`, {
@@ -1101,19 +1133,19 @@
         }
 
         statsBtn.disabled = false;
-        statsBtn.innerHTML = `<span>✅ Đã tải xong (${athleteItems.length})</span>`;
-        showNotification(`Đã tải xong thông số của ${athleteItems.length} vận động viên! 🏃`, 'success');
+        statsBtn.innerHTML = `<span>✅ Stats Loaded (${athleteItems.length})</span>`;
+        showNotification(`Successfully loaded stats for ${athleteItems.length} athletes! 🏃`, 'success');
 
         setTimeout(() => {
             if (statsBtn && !statsBtn.disabled) {
                 statsBtn.innerHTML = `
                     <svg class="kudo-icon" viewBox="0 0 24 24" width="16" height="16">
-                        <path fill="currentColor" d="M13 2.05v3.03c3.39.49 6 3.39 6 6.92 0 .9-.18 1.75-.48 2.54l2.6 1.53c.56-1.24.88-2.62.88-4.07 0-5.18-3.95-9.45-9-9.95zM12 19c-3.87 0-7-3.13-7-7 0-3.53 2.61-6.43 6-6.92V2.05c-5.06.5-9 4.76-9 9.95 0 5.52 4.47 10 9.99 10 3.31 0 6.24-1.61 8.01-4.09l-2.45-1.45C16.3 17.8 14.28 19 12 19z"/>
+                        <path fill="currentColor" d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
                     </svg>
-                    <span>⚡ Tải lại thông số</span>
+                    <span>⚡ Refresh Stats</span>
                 `;
             }
-        }, 4000);
+        }, 3000);
     }
 
     function renderAthleteStatsRow(row, link, stats) {
@@ -1129,22 +1161,22 @@
         statsRow.className = 'kudo-athlete-stats-row';
 
         if (stats.isPrivate) {
-            statsRow.innerHTML = '<span class="kudo-stat-muted">🔒 Hoạt động riêng tư</span>';
+            statsRow.innerHTML = '<span class="kudo-stat-muted">🔒 Private Activity</span>';
         } else {
             let html = '';
             if (stats.distance && stats.distance !== '—') {
-                html += `<span class="kudo-stat-badge kudo-stat-highlight" title="Khoảng cách">🏃 ${stats.distance}</span>`;
+                html += `<span class="kudo-stat-badge kudo-stat-highlight" title="Distance">🏃 ${stats.distance}</span>`;
             }
             if (stats.pace && stats.pace !== '—') {
-                html += `<span class="kudo-stat-badge" title="Tốc độ trung bình">⚡ ${stats.pace}</span>`;
+                html += `<span class="kudo-stat-badge" title="Average Pace">⚡ ${stats.pace}</span>`;
             }
             if (stats.hr && stats.hr !== '—') {
-                html += `<span class="kudo-stat-badge kudo-stat-hr" title="Nhịp tim trung bình">❤️ ${stats.hr}</span>`;
+                html += `<span class="kudo-stat-badge kudo-stat-hr" title="Average Heart Rate">❤️ ${stats.hr}</span>`;
             } else {
-                html += '<span class="kudo-stat-badge" title="Không có dữ liệu nhịp tim" style="opacity: 0.6;">❤️ —</span>';
+                html += '<span class="kudo-stat-badge" title="No heart rate data" style="opacity: 0.6;">❤️ —</span>';
             }
             if (stats.time && stats.time !== '—') {
-                html += `<span class="kudo-stat-badge kudo-stat-time" title="Thời gian chạy">⏱️ ${stats.time}</span>`;
+                html += `<span class="kudo-stat-badge kudo-stat-time" title="Moving Time">⏱️ ${stats.time}</span>`;
             }
             statsRow.innerHTML = html;
         }
@@ -1161,7 +1193,7 @@
         }
         const statsRow = document.createElement('div');
         statsRow.className = 'kudo-athlete-stats-row';
-        statsRow.innerHTML = '<span class="kudo-stat-loading">⏳ Đang tải thông số...</span>';
+        statsRow.innerHTML = '<span class="kudo-stat-loading">⏳ Loading stats...</span>';
         insertStatsRowIntoRow(row, link, statsRow);
     }
 
@@ -1173,7 +1205,7 @@
         }
         const statsRow = document.createElement('div');
         statsRow.className = 'kudo-athlete-stats-row';
-        statsRow.innerHTML = '<span class="kudo-stat-muted">⚠️ Không tải được</span>';
+        statsRow.innerHTML = '<span class="kudo-stat-muted">⚠️ Failed to load</span>';
         insertStatsRowIntoRow(row, link, statsRow);
     }
 

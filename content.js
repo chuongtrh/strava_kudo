@@ -1073,63 +1073,39 @@
         btnContainer.appendChild(statsBtn);
 
         // Insertion Strategy:
-        // Priority 1: Right below the tab bar
+        // Priority 1: Directly below the tab bar
         let inserted = false;
         if (tabEl) {
-            let tabContainer = tabEl.closest('[role="tablist"], nav, ul');
-            if (!tabContainer) {
-                let p = tabEl.parentElement;
-                while (p && p !== modal && p !== document.body) {
-                    const text = p.textContent.toLowerCase();
-                    if (text.includes('kudos') || text.includes('comments')) {
-                        tabContainer = p;
-                        break;
-                    }
-                    p = p.parentElement;
-                }
-            }
-
-            if (tabContainer && tabContainer !== modal && tabContainer.parentElement) {
-                if (tabContainer.nextSibling) {
-                    tabContainer.parentElement.insertBefore(btnContainer, tabContainer.nextSibling);
+            const tabBar = tabEl.closest('[role="tablist"], nav, ul') || tabEl.parentElement;
+            if (tabBar && tabBar !== modal && tabBar !== document.body && tabBar.parentElement) {
+                if (tabBar.nextElementSibling) {
+                    tabBar.parentElement.insertBefore(btnContainer, tabBar.nextElementSibling);
                 } else {
-                    tabContainer.parentElement.appendChild(btnContainer);
+                    tabBar.after(btnContainer);
                 }
                 inserted = true;
-                console.log('[Strava Kudo All] Injected group stats button successfully below tab bar!');
+                console.log('[Strava Kudo All] Injected group stats banner below tab bar!');
             }
         }
 
-        // Priority 2: Before the first athlete row
-        if (!inserted && otherAthletesLinks.length > 0) {
-            const firstLink = otherAthletesLinks[0];
-            const firstRow = firstLink.closest('li, [class*="athlete"], [class*="item"], [class*="row"]')
-                || firstLink.parentElement.parentElement;
-            if (firstRow && firstRow.parentElement) {
-                firstRow.parentElement.insertBefore(btnContainer, firstRow);
-                inserted = true;
-                console.log('[Strava Kudo All] Injected group stats button successfully before athlete list!');
-            }
+        // Priority 2: Directly after modal header (as direct child of modal)
+        if (!inserted && modal && modal !== document.body && modal.children.length > 1) {
+            modal.insertBefore(btnContainer, modal.children[1]);
+            inserted = true;
+            console.log('[Strava Kudo All] Injected group stats banner after modal header!');
         }
 
-        // Priority 3: Before Leave Group button
-        if (!inserted) {
-            const allBtns = Array.from(modal.querySelectorAll('button, a'));
-            const leaveGroupBtn = allBtns.find(el => {
-                const t = el.textContent.trim().toLowerCase();
-                return t === 'leave group' || t === 'rời khỏi nhóm';
-            });
-            if (leaveGroupBtn && leaveGroupBtn.parentElement) {
-                leaveGroupBtn.parentElement.insertBefore(btnContainer, leaveGroupBtn);
-                inserted = true;
-                console.log('[Strava Kudo All] Injected group stats button before Leave Group button!');
-            }
-        }
-
-        // Priority 4: Prepend to modal (guaranteed fallback from original working version)
-        if (!inserted) {
+        // Priority 3: Prepend to modal
+        if (!inserted && modal && modal !== document.body) {
             modal.prepend(btnContainer);
-            console.log('[Strava Kudo All] Injected group stats button prepended to modal!');
+            inserted = true;
+            console.log('[Strava Kudo All] Injected group stats banner prepended to modal!');
+        }
+
+        // Priority 4: Fallback prepend to body
+        if (!inserted) {
+            document.body.prepend(btnContainer);
+            console.log('[Strava Kudo All] Injected group stats banner into body fallback!');
         }
     }
 

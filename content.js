@@ -919,91 +919,51 @@
         checkAndInjectGroupStatsButton();
     }
 
-    function findOtherAthletesModal() {
-        // Signal 1: Button with text "Leave Group"
-        const allButtons = Array.from(document.querySelectorAll('button, a, [role="button"]'));
-        const leaveGroupBtn = allButtons.find(el => {
-            const t = el.textContent.trim().toLowerCase();
-            return t === 'leave group' || t === 'rời khỏi nhóm';
-        });
-        if (leaveGroupBtn) {
-            return leaveGroupBtn.closest('[role="dialog"], [class*="modal"], [class*="Modal"], [class*="dialog"]') || findAncestorModal(leaveGroupBtn);
-        }
-
-        // Signal 2: Tab with text "Other Athletes"
-        const allTabCandidates = Array.from(document.querySelectorAll('button, [role="tab"], div, a, li, span'));
-        const tabEl = allTabCandidates.find(el => {
-            const t = el.textContent.trim().toLowerCase();
-            return (t === 'other athletes' || t === 'vận động viên khác') && el.children.length === 0;
-        });
-        if (tabEl) {
-            return tabEl.closest('[role="dialog"], [class*="modal"], [class*="Modal"], [class*="dialog"]') || findAncestorModal(tabEl);
-        }
-
-        // Signal 3: Standard modal dialogs
-        return document.querySelector('[role="dialog"], [class*="Modal_modal"], [class*="modal-dialog"], div[data-testid="web-modal"]');
-    }
-
-    function findAncestorModal(el) {
-        let curr = el;
-        while (curr && curr !== document.body && curr !== document.documentElement) {
-            const style = window.getComputedStyle(curr);
-            if (style.position === 'fixed' || (style.position === 'absolute' && parseInt(style.zIndex, 10) > 10)) {
-                return curr;
-            }
-            if (curr.getAttribute('role') === 'dialog' || /modal/i.test(curr.className)) {
-                return curr;
-            }
-            curr = curr.parentElement;
-        }
-        return el.parentElement;
-    }
-
     function checkAndInjectGroupStatsButton() {
         if (!window.location.pathname.includes('/activities/')) {
             return;
         }
 
-        const modal = findOtherAthletesModal();
-        if (!modal) {
-            return;
-        }
-
-        // Clean up any old wrapper attached directly to modal top
-        const existingWrapper = modal.querySelector('#kudo-group-stats-btn-wrapper');
-        if (existingWrapper && existingWrapper.parentElement === modal) {
-            existingWrapper.remove();
-        }
-
-        if (document.getElementById('kudo-load-group-stats-btn')) {
-            return;
-        }
-
         const currentActivityId = extractActivityId(window.location.pathname);
-        const otherAthletesLinks = Array.from(modal.querySelectorAll('a[href*="/activities/"]'))
+
+        // Find all links to other activities on the page
+        const otherAthletesLinks = Array.from(document.querySelectorAll('a[href*="/activities/"]'))
             .filter(a => {
                 const id = extractActivityId(a.href);
                 return id && id !== currentActivityId;
             });
 
-        // Check if modal currently displays Other Athletes
-        const hasOtherAthletesTab = Array.from(modal.querySelectorAll('*')).some(el => {
-            const t = el.textContent.trim().toLowerCase();
-            return (t === 'other athletes' || t === 'vận động viên khác') && el.children.length === 0;
+        // Filter to visible links (inside the open modal)
+        const visibleLinks = otherAthletesLinks.filter(a => {
+            return a.offsetParent !== null || a.getClientRects().length > 0;
         });
 
-        if (!hasOtherAthletesTab && otherAthletesLinks.length === 0) {
+        if (visibleLinks.length === 0) {
             return;
         }
 
-        if (otherAthletesLinks.length === 0) {
+        const firstLink = visibleLinks[0];
+        const firstRow = firstLink.closest('li, [class*="athlete"], [class*="item"], [class*="row"]')
+            || firstLink.parentElement.parentElement;
+
+        if (!firstRow || !firstRow.parentElement) {
             return;
         }
 
-        console.log('[Strava Kudo All] Detected Other Athletes modal! Athletes count:', otherAthletesLinks.length);
+        // Clean up any old wrapper not placed right before firstRow
+        const oldWrapper = document.getElementById('kudo-group-stats-btn-wrapper');
+        if (oldWrapper) {
+            if (oldWrapper.nextElementSibling === firstRow) {
+                // Already in perfect position
+                return;
+            }
+            oldWrapper.remove();
+        }
+
+        console.log('[Strava Kudo All] Found visible athlete rows:', visibleLinks.length);
 
         // Auto-render cached athletes
-        otherAthletesLinks.forEach(link => {
+        visibleLinks.forEach(link => {
             const actId = extractActivityId(link.href);
             if (actId && groupStatsCache.has(actId)) {
                 const row = link.closest('li, [class*="athlete"], [class*="item"], [class*="row"]') || link.parentElement;
@@ -1019,7 +979,7 @@
 
         const titleSpan = document.createElement('span');
         titleSpan.className = 'kudo-group-stats-title';
-        titleSpan.textContent = `Other Athletes (${otherAthletesLinks.length})`;
+        titleSpan.textContent = `Other Athletes (${visibleLinks.length})`;
 
         const statsBtn = document.createElement('button');
         statsBtn.id = 'kudo-load-group-stats-btn';
@@ -1034,27 +994,18 @@
         statsBtn.onclick = (e) => {
             e.preventDefault();
             e.stopPropagation();
-            loadGroupAthletesStats(modal, statsBtn);
+            loadGroupAthletesStats(statsBtn);
         };
 
         btnContainer.appendChild(titleSpan);
         btnContainer.appendChild(statsBtn);
 
-        // Insert neatly right before the first athlete row
-        const firstLink = otherAthletesLinks[0];
-        const firstRow = firstLink.closest('li, [class*="athlete"], [class*="item"], [class*="row"]')
-            || firstLink.parentElement.parentElement;
-
-        if (firstRow && firstRow.parentElement) {
-            firstRow.parentElement.insertBefore(btnContainer, firstRow);
-        } else if (firstLink.parentElement) {
-            firstLink.parentElement.insertBefore(btnContainer, firstLink);
-        }
-
-        console.log('[Strava Kudo All] Injected group stats button successfully before first athlete!');
+        // Insert right before the first athlete row
+        firstRow.parentElement.insertBefore(btnContainer, firstRow);
+        console.log('[Strava Kudo All] Injected group stats banner before first athlete row!');
     }
 
-    async function loadGroupAthletesStats(modal, statsBtn) {
+    async function loadGroupAthletesStats(statsBtn) {
         if (!statsBtn) return;
 
         // Check if user clicked Refresh to force re-fetch
@@ -1066,10 +1017,10 @@
         statsBtn.disabled = true;
 
         const currentActivityId = extractActivityId(window.location.pathname);
-        const links = Array.from(modal.querySelectorAll('a[href*="/activities/"]'))
+        const links = Array.from(document.querySelectorAll('a[href*="/activities/"]'))
             .filter(a => {
                 const id = extractActivityId(a.href);
-                return id && id !== currentActivityId;
+                return id && id !== currentActivityId && (a.offsetParent !== null || a.getClientRects().length > 0);
             });
 
         if (links.length === 0) {

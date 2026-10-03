@@ -45,6 +45,10 @@
         return list.some(item => item.id === athleteId);
     }
 
+    // In-memory cache for group athlete activity stats
+    const groupStatsCache = new Map();
+    let activityObserver = null;
+
     // Wait for page to be fully loaded
     function init() {
         if (window.location.pathname.includes('/dashboard')) {
@@ -58,8 +62,21 @@
             setTimeout(() => {
                 createProfileKudoButton();
             }, 1000);
+        } else if (window.location.pathname.includes('/activities/')) {
+            setTimeout(() => {
+                setupActivityPageObserver();
+            }, 1000);
         }
     }
+
+    // Watch for SPA URL changes
+    let lastKnownUrl = window.location.href;
+    setInterval(() => {
+        if (window.location.href !== lastKnownUrl) {
+            lastKnownUrl = window.location.href;
+            init();
+        }
+    }, 1500);
 
     // Observe dashboard for new activities
     function setupMutationObserver() {
@@ -699,6 +716,413 @@
             </svg>
             <span>Kudo All 🔥</span>
         `;
+    }
+
+    // --- Other Athletes Stats in Activity Page ---
+
+    function extractActivityId(urlOrPath) {
+        if (!urlOrPath) return null;
+        const match = urlOrPath.match(/\/activities\/(\d+)/);
+        return match ? match[1] : null;
+    }
+
+    function parseActivityStats(html) {
+        let distance = null;
+        let pace = null;
+        let hr = null;
+        let time = null;
+        let isPrivate = false;
+
+        if (!html) {
+            return { distance: '—', pace: '—', hr: '—', time: '—', isPrivate: true };
+        }
+
+        if (html.includes('Log in to see') || html.includes('This activity is private') || html.includes('Hoạt động này là riêng tư')) {
+            isPrivate = true;
+        }
+
+        // Strategy 1: DOMParser
+        try {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+
+            const statItems = doc.querySelectorAll('.inline-stats li, [data-testid="inline-stats"] li, .activity-stats li');
+            if (statItems.length > 0) {
+                statItems.forEach(item => {
+                    const subheadEl = item.querySelector('.stat-subhead, [class*="subhead"], [class*="label"]');
+                    const subhead = (subheadEl ? subheadEl.textContent : '').trim().toLowerCase();
+                    const valEl = item.querySelector('.stat-value, strong, [class*="value"]');
+                    if (valEl) {
+                        const text = valEl.textContent.trim().replace(/\s+/g, ' ');
+                        if (subhead.includes('distance') || subhead.includes('khoảng cách')) {
+                            distance = text;
+                        } else if (subhead.includes('pace') || subhead.includes('tốc độ')) {
+                            pace = text;
+                        } else if (subhead.includes('time') || subhead.includes('thời gian')) {
+                            time = text;
+                        } else if (subhead.includes('heart rate') || subhead.includes('nhịp tim') || text.includes('bpm')) {
+                            hr = text;
+                        }
+                    }
+                });
+            }
+        } catch (e) {
+            console.warn('Strava Kudo All: DOMParser failed, trying fallback', e);
+        }
+
+        // Strategy 2: Next.js script data
+        if (!distance || !pace) {
+            try {
+                const nextDataMatch = html.match(/<script[^>]*id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/);
+                if (nextDataMatch && nextDataMatch[1]) {
+                    const json = JSON.parse(nextDataMatch[1]);
+                    const act = json?.props?.pageProps?.activity;
+                    if (act) {
+                        if (act.distance && !distance) {
+                            distance = (act.distance / 1000).toFixed(2) + ' km';
+                        }
+                        if (act.moving_time && !time) {
+                            const mins = Math.floor(act.moving_time / 60);
+                            const secs = Math.floor(act.moving_time % 60);
+                            time = mins >= 60
+                                ? `${Math.floor(mins / 60)}h ${mins % 60}m`
+                                : `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+
+                            if (act.distance && act.distance > 0 && !pace) {
+                                const paceSecsPerKm = act.moving_time / (act.distance / 1000);
+                                const pMin = Math.floor(paceSecsPerKm / 60);
+                                const pSec = Math.floor(paceSecsPerKm % 60);
+                                pace = `${pMin}:${pSec < 10 ? '0' : ''}${pSec} /km`;
+                            }
+                        }
+                        if (act.average_heartrate && !hr) {
+                            hr = `${Math.round(act.average_heartrate)} bpm`;
+                        }
+                    }
+                }
+            } catch (e) {
+                // ignore
+            }
+        }
+
+        // Strategy 3: Regex fallback on <li> blocks
+        if (!distance || !pace) {
+            const liRegex = /<li[^>]*>([\s\S]*?)<\/li>/gi;
+            let match;
+            while ((match = liRegex.exec(html)) !== null) {
+                const block = match[1];
+                const subheadMatch = block.match(/class=["'][^"']*stat-subhead[^"']*["']>([^<]+)<\/span>/i);
+                const valueMatch = block.match(/class=["'][^"']*stat-value[^"']*["']>([^<]+)(?:<abbr[^>]*>([^<]+)<\/abbr>)?/i);
+
+                if (subheadMatch && valueMatch) {
+                    const subhead = subheadMatch[1].trim().toLowerCase();
+                    const val = valueMatch[1].trim();
+                    const unit = valueMatch[2] ? valueMatch[2].trim() : '';
+                    const fullVal = unit ? `${val} ${unit}` : val;
+
+                    if (!distance && (subhead.includes('distance') || subhead.includes('khoảng cách'))) {
+                        distance = fullVal;
+                    } else if (!pace && (subhead.includes('pace') || subhead.includes('tốc độ'))) {
+                        pace = fullVal;
+                    } else if (!time && (subhead.includes('time') || subhead.includes('thời gian'))) {
+                        time = fullVal;
+                    } else if (!hr && (subhead.includes('heart rate') || subhead.includes('nhịp tim') || unit.toLowerCase() === 'bpm')) {
+                        hr = fullVal;
+                    }
+                }
+            }
+        }
+
+        return {
+            distance: distance || '—',
+            pace: pace || '—',
+            hr: hr || '—',
+            time: time || '—',
+            isPrivate
+        };
+    }
+
+    function setupActivityPageObserver() {
+        if (activityObserver) {
+            activityObserver.disconnect();
+        }
+
+        activityObserver = new MutationObserver(() => {
+            checkAndInjectGroupStatsButton();
+        });
+
+        activityObserver.observe(document.body, { childList: true, subtree: true });
+
+        // Initial check
+        checkAndInjectGroupStatsButton();
+    }
+
+    function checkAndInjectGroupStatsButton() {
+        if (!window.location.pathname.includes('/activities/')) {
+            return;
+        }
+
+        if (document.getElementById('kudo-load-group-stats-btn')) {
+            return;
+        }
+
+        const currentActivityId = extractActivityId(window.location.pathname);
+
+        // Find candidate modals or dialogs
+        const dialogs = document.querySelectorAll('[role="dialog"], [class*="modal"], [class*="Modal"], [data-testid="web-modal"], div[class*="lightbox"]');
+        let targetModal = null;
+        let otherAthletesLinks = [];
+
+        for (const dialog of dialogs) {
+            const links = Array.from(dialog.querySelectorAll('a[href*="/activities/"]'))
+                .filter(a => {
+                    const id = extractActivityId(a.href);
+                    return id && id !== currentActivityId;
+                });
+            if (links.length > 0) {
+                targetModal = dialog;
+                otherAthletesLinks = links;
+                break;
+            }
+        }
+
+        // Fallback: check whole document if modal doesn't have role=dialog
+        if (!targetModal) {
+            const links = Array.from(document.querySelectorAll('a[href*="/activities/"]'))
+                .filter(a => {
+                    const id = extractActivityId(a.href);
+                    return id && id !== currentActivityId;
+                });
+            const hasLeaveGroup = Array.from(document.querySelectorAll('button, a')).some(el => {
+                const text = el.textContent.trim().toLowerCase();
+                return text.includes('leave group') || text.includes('rời khỏi nhóm') || text.includes('other athletes');
+            });
+            if (links.length > 0 && hasLeaveGroup) {
+                targetModal = links[0].closest('[role="dialog"], [class*="modal"], [class*="Modal"], div') || document.body;
+                otherAthletesLinks = links;
+            }
+        }
+
+        if (!targetModal || otherAthletesLinks.length === 0) {
+            return;
+        }
+
+        // Auto-render any athletes already in cache
+        otherAthletesLinks.forEach(link => {
+            const actId = extractActivityId(link.href);
+            if (actId && groupStatsCache.has(actId)) {
+                const row = link.closest('li, [class*="athlete"], [class*="item"], [class*="row"]') || link.parentElement;
+                if (row && !row.querySelector('.kudo-athlete-stats-row')) {
+                    renderAthleteStatsRow(row, link, groupStatsCache.get(actId));
+                }
+            }
+        });
+
+        // Find container to insert the button
+        const firstLink = otherAthletesLinks[0];
+        const listContainer = firstLink.closest('ul, ol') || firstLink.closest('[class*="list"]') || firstLink.closest('div');
+
+        if (!listContainer || !listContainer.parentElement) {
+            return;
+        }
+
+        // Avoid duplicate button wrapper
+        if (targetModal.querySelector('#kudo-group-stats-btn-wrapper')) {
+            return;
+        }
+
+        const btnContainer = document.createElement('div');
+        btnContainer.id = 'kudo-group-stats-btn-wrapper';
+        btnContainer.style.display = 'flex';
+        btnContainer.style.justifyContent = 'center';
+        btnContainer.style.padding = '8px 16px';
+        btnContainer.style.borderBottom = '1px solid #eee';
+
+        const statsBtn = document.createElement('button');
+        statsBtn.id = 'kudo-load-group-stats-btn';
+        statsBtn.className = 'kudo-group-stats-btn';
+        statsBtn.innerHTML = `
+            <svg class="kudo-icon" viewBox="0 0 24 24" width="16" height="16">
+                <path fill="currentColor" d="M13 2.05v3.03c3.39.49 6 3.39 6 6.92 0 .9-.18 1.75-.48 2.54l2.6 1.53c.56-1.24.88-2.62.88-4.07 0-5.18-3.95-9.45-9-9.95zM12 19c-3.87 0-7-3.13-7-7 0-3.53 2.61-6.43 6-6.92V2.05c-5.06.5-9 4.76-9 9.95 0 5.52 4.47 10 9.99 10 3.31 0 6.24-1.61 8.01-4.09l-2.45-1.45C16.3 17.8 14.28 19 12 19z"/>
+            </svg>
+            <span>⚡ Tải thông số (${otherAthletesLinks.length} vận động viên)</span>
+        `;
+
+        statsBtn.onclick = () => loadGroupAthletesStats(targetModal, statsBtn);
+
+        btnContainer.appendChild(statsBtn);
+        listContainer.parentElement.insertBefore(btnContainer, listContainer);
+    }
+
+    async function loadGroupAthletesStats(modal, statsBtn) {
+        if (!statsBtn) return;
+        statsBtn.disabled = true;
+
+        const currentActivityId = extractActivityId(window.location.pathname);
+        const links = Array.from(modal.querySelectorAll('a[href*="/activities/"]'))
+            .filter(a => {
+                const id = extractActivityId(a.href);
+                return id && id !== currentActivityId;
+            });
+
+        if (links.length === 0) {
+            statsBtn.disabled = false;
+            showNotification('Không tìm thấy liên kết bài chạy nào trong nhóm', 'info');
+            return;
+        }
+
+        const athleteItems = [];
+        const seenIds = new Set();
+
+        for (const link of links) {
+            const actId = extractActivityId(link.href);
+            if (!actId || seenIds.has(actId)) continue;
+            seenIds.add(actId);
+            const row = link.closest('li, [class*="athlete"], [class*="item"], [class*="row"]') || link.parentElement;
+            athleteItems.push({ actId, link, row });
+        }
+
+        // Render cached items first
+        for (const item of athleteItems) {
+            if (groupStatsCache.has(item.actId)) {
+                renderAthleteStatsRow(item.row, item.link, groupStatsCache.get(item.actId));
+            } else {
+                renderLoadingStatsRow(item.row, item.link);
+            }
+        }
+
+        const uncachedItems = athleteItems.filter(item => !groupStatsCache.has(item.actId));
+        let processedCount = athleteItems.length - uncachedItems.length;
+
+        for (let i = 0; i < uncachedItems.length; i++) {
+            const item = uncachedItems[i];
+            statsBtn.innerHTML = `<span>⏳ Đang tải thông số... (${processedCount + 1}/${athleteItems.length})</span>`;
+
+            try {
+                const res = await fetch(`/activities/${item.actId}`, {
+                    credentials: 'include',
+                    headers: {
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+                    }
+                });
+
+                if (!res.ok) {
+                    throw new Error(`HTTP ${res.status}`);
+                }
+
+                const html = await res.text();
+                const stats = parseActivityStats(html);
+                groupStatsCache.set(item.actId, stats);
+                renderAthleteStatsRow(item.row, item.link, stats);
+            } catch (err) {
+                console.error(`Strava Kudo All: Error loading activity ${item.actId}`, err);
+                renderErrorStatsRow(item.row, item.link);
+            }
+
+            processedCount++;
+            if (i < uncachedItems.length - 1) {
+                await sleep(200); // 200ms throttle
+            }
+        }
+
+        statsBtn.disabled = false;
+        statsBtn.innerHTML = `<span>✅ Đã tải xong (${athleteItems.length})</span>`;
+        showNotification(`Đã tải xong thông số của ${athleteItems.length} vận động viên! 🏃`, 'success');
+
+        setTimeout(() => {
+            if (statsBtn && !statsBtn.disabled) {
+                statsBtn.innerHTML = `
+                    <svg class="kudo-icon" viewBox="0 0 24 24" width="16" height="16">
+                        <path fill="currentColor" d="M13 2.05v3.03c3.39.49 6 3.39 6 6.92 0 .9-.18 1.75-.48 2.54l2.6 1.53c.56-1.24.88-2.62.88-4.07 0-5.18-3.95-9.45-9-9.95zM12 19c-3.87 0-7-3.13-7-7 0-3.53 2.61-6.43 6-6.92V2.05c-5.06.5-9 4.76-9 9.95 0 5.52 4.47 10 9.99 10 3.31 0 6.24-1.61 8.01-4.09l-2.45-1.45C16.3 17.8 14.28 19 12 19z"/>
+                    </svg>
+                    <span>⚡ Tải lại thông số</span>
+                `;
+            }
+        }, 4000);
+    }
+
+    function renderAthleteStatsRow(row, link, stats) {
+        if (!row) return;
+
+        // Remove any existing stats row
+        const existing = row.querySelector('.kudo-athlete-stats-row');
+        if (existing) {
+            existing.remove();
+        }
+
+        const statsRow = document.createElement('div');
+        statsRow.className = 'kudo-athlete-stats-row';
+
+        if (stats.isPrivate) {
+            statsRow.innerHTML = '<span class="kudo-stat-muted">🔒 Hoạt động riêng tư</span>';
+        } else {
+            let html = '';
+            if (stats.distance && stats.distance !== '—') {
+                html += `<span class="kudo-stat-badge kudo-stat-highlight" title="Khoảng cách">🏃 ${stats.distance}</span>`;
+            }
+            if (stats.pace && stats.pace !== '—') {
+                html += `<span class="kudo-stat-badge" title="Tốc độ trung bình">⚡ ${stats.pace}</span>`;
+            }
+            if (stats.hr && stats.hr !== '—') {
+                html += `<span class="kudo-stat-badge kudo-stat-hr" title="Nhịp tim trung bình">❤️ ${stats.hr}</span>`;
+            } else {
+                html += '<span class="kudo-stat-badge" title="Không có dữ liệu nhịp tim" style="opacity: 0.6;">❤️ —</span>';
+            }
+            if (stats.time && stats.time !== '—') {
+                html += `<span class="kudo-stat-badge kudo-stat-time" title="Thời gian chạy">⏱️ ${stats.time}</span>`;
+            }
+            statsRow.innerHTML = html;
+        }
+
+        // Insert row into proper position
+        insertStatsRowIntoRow(row, link, statsRow);
+    }
+
+    function renderLoadingStatsRow(row, link) {
+        if (!row) return;
+        const existing = row.querySelector('.kudo-athlete-stats-row');
+        if (existing) {
+            existing.remove();
+        }
+        const statsRow = document.createElement('div');
+        statsRow.className = 'kudo-athlete-stats-row';
+        statsRow.innerHTML = '<span class="kudo-stat-loading">⏳ Đang tải thông số...</span>';
+        insertStatsRowIntoRow(row, link, statsRow);
+    }
+
+    function renderErrorStatsRow(row, link) {
+        if (!row) return;
+        const existing = row.querySelector('.kudo-athlete-stats-row');
+        if (existing) {
+            existing.remove();
+        }
+        const statsRow = document.createElement('div');
+        statsRow.className = 'kudo-athlete-stats-row';
+        statsRow.innerHTML = '<span class="kudo-stat-muted">⚠️ Không tải được</span>';
+        insertStatsRowIntoRow(row, link, statsRow);
+    }
+
+    function insertStatsRowIntoRow(row, link, statsRow) {
+        if (!row || !statsRow) return;
+
+        // Strategy 1: Insert after link's immediate parent if it is an inline block
+        if (link && link.parentElement && link.parentElement !== row) {
+            if (link.parentElement.nextSibling) {
+                link.parentElement.parentNode.insertBefore(statsRow, link.parentElement.nextSibling);
+            } else {
+                link.parentElement.parentNode.appendChild(statsRow);
+            }
+            return;
+        }
+
+        // Strategy 2: If link is direct child of row
+        if (link && link.nextSibling) {
+            row.insertBefore(statsRow, link.nextSibling);
+            return;
+        }
+
+        // Strategy 3: Append to row
+        row.appendChild(statsRow);
     }
 
     // Helper function for delays

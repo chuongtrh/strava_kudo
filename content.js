@@ -919,68 +919,78 @@
         checkAndInjectGroupStatsButton();
     }
 
+    function findOtherAthletesModal() {
+        // Signal 1: Button with text "Leave Group"
+        const allButtons = Array.from(document.querySelectorAll('button, a, [role="button"]'));
+        const leaveGroupBtn = allButtons.find(el => {
+            const t = el.textContent.trim().toLowerCase();
+            return t === 'leave group' || t === 'rời khỏi nhóm';
+        });
+        if (leaveGroupBtn) {
+            return leaveGroupBtn.closest('[role="dialog"], [class*="modal"], [class*="Modal"], [class*="dialog"]') || findAncestorModal(leaveGroupBtn);
+        }
+
+        // Signal 2: Tab with text "Other Athletes"
+        const allTabCandidates = Array.from(document.querySelectorAll('button, [role="tab"], div, a, li, span'));
+        const tabEl = allTabCandidates.find(el => {
+            const t = el.textContent.trim().toLowerCase();
+            return (t === 'other athletes' || t === 'vận động viên khác') && el.children.length === 0;
+        });
+        if (tabEl) {
+            return tabEl.closest('[role="dialog"], [class*="modal"], [class*="Modal"], [class*="dialog"]') || findAncestorModal(tabEl);
+        }
+
+        // Signal 3: Standard modal dialogs
+        return document.querySelector('[role="dialog"], [class*="Modal_modal"], [class*="modal-dialog"], div[data-testid="web-modal"]');
+    }
+
+    function findAncestorModal(el) {
+        let curr = el;
+        while (curr && curr !== document.body && curr !== document.documentElement) {
+            const style = window.getComputedStyle(curr);
+            if (style.position === 'fixed' || (style.position === 'absolute' && parseInt(style.zIndex, 10) > 10)) {
+                return curr;
+            }
+            if (curr.getAttribute('role') === 'dialog' || /modal/i.test(curr.className)) {
+                return curr;
+            }
+            curr = curr.parentElement;
+        }
+        return el.parentElement;
+    }
+
     function checkAndInjectGroupStatsButton() {
         if (!window.location.pathname.includes('/activities/')) {
             return;
         }
 
-        const currentActivityId = extractActivityId(window.location.pathname);
+        const modal = findOtherAthletesModal();
+        if (!modal) {
+            return;
+        }
 
-        // Find all links to other activities on the page
-        const otherAthletesLinks = Array.from(document.querySelectorAll('a[href*="/activities/"]'))
+        const currentActivityId = extractActivityId(window.location.pathname);
+        const otherAthletesLinks = Array.from(modal.querySelectorAll('a[href*="/activities/"]'))
             .filter(a => {
                 const id = extractActivityId(a.href);
                 return id && id !== currentActivityId;
             });
 
+        // If not on Other Athletes tab (no athlete links), remove any misplaced wrapper
         if (otherAthletesLinks.length === 0) {
+            const existingWrapper = modal.querySelector('#kudo-group-stats-btn-wrapper');
+            if (existingWrapper) {
+                existingWrapper.remove();
+            }
             return;
         }
 
-        // Find the list container and the first athlete item
-        let listContainer = null;
-        let firstAthleteItem = null;
-
-        if (otherAthletesLinks.length >= 2) {
-            const link0 = otherAthletesLinks[0];
-            const link1 = otherAthletesLinks[1];
-
-            let ancestor = link0.parentElement;
-            while (ancestor && ancestor !== document.body && !ancestor.contains(link1)) {
-                ancestor = ancestor.parentElement;
-            }
-
-            if (ancestor && ancestor !== document.body) {
-                listContainer = ancestor;
-                let curr = link0;
-                while (curr && curr.parentElement !== listContainer) {
-                    curr = curr.parentElement;
-                }
-                firstAthleteItem = curr;
-            }
-        }
-
-        if (!listContainer || !firstAthleteItem) {
-            const firstLink = otherAthletesLinks[0];
-            firstAthleteItem = firstLink.closest('li, [class*="athlete"], [class*="item"], [class*="row"]')
-                || firstLink.parentElement.parentElement;
-            listContainer = firstAthleteItem ? firstAthleteItem.parentElement : firstLink.parentElement;
-        }
-
-        if (!listContainer || !firstAthleteItem) {
+        // Avoid duplicate button if already in position inside modal
+        if (modal.querySelector('#kudo-group-stats-btn-wrapper')) {
             return;
         }
 
-        // Check if button wrapper is already in position inside listContainer
-        const existingWrapper = document.getElementById('kudo-group-stats-btn-wrapper');
-        if (existingWrapper) {
-            if (listContainer.contains(existingWrapper)) {
-                return;
-            }
-            existingWrapper.remove();
-        }
-
-        console.log('[Strava Kudo All] Found athlete links in group:', otherAthletesLinks.length);
+        console.log('[Strava Kudo All] Found athlete links in group modal:', otherAthletesLinks.length);
 
         // Auto-render cached athletes
         otherAthletesLinks.forEach(link => {
@@ -993,19 +1003,45 @@
             }
         });
 
-        const isList = listContainer.tagName.toUpperCase() === 'UL' || listContainer.tagName.toUpperCase() === 'OL';
-        const btnContainer = document.createElement(isList ? 'li' : 'div');
+        const btnContainer = document.createElement('div');
         btnContainer.id = 'kudo-group-stats-btn-wrapper';
         btnContainer.className = 'kudo-group-stats-btn-wrapper';
-        btnContainer.style.listStyle = 'none';
+        btnContainer.style.display = 'flex';
+        btnContainer.style.justifyContent = 'space-between';
+        btnContainer.style.alignItems = 'center';
+        btnContainer.style.padding = '8px 16px';
+        btnContainer.style.margin = '8px 16px 12px 16px';
+        btnContainer.style.background = '#fff8f5';
+        btnContainer.style.border = '1px solid #ffccb8';
+        btnContainer.style.borderRadius = '6px';
+        btnContainer.style.boxSizing = 'border-box';
 
         const titleSpan = document.createElement('span');
         titleSpan.className = 'kudo-group-stats-title';
+        titleSpan.style.fontSize = '13px';
+        titleSpan.style.fontWeight = '600';
+        titleSpan.style.color = '#333333';
+        titleSpan.style.display = 'flex';
+        titleSpan.style.alignItems = 'center';
+        titleSpan.style.gap = '6px';
         titleSpan.textContent = `Other Athletes (${otherAthletesLinks.length})`;
 
         const statsBtn = document.createElement('button');
         statsBtn.id = 'kudo-load-group-stats-btn';
         statsBtn.className = 'kudo-group-stats-btn';
+        statsBtn.style.display = 'inline-flex';
+        statsBtn.style.alignItems = 'center';
+        statsBtn.style.justifyContent = 'center';
+        statsBtn.style.gap = '6px';
+        statsBtn.style.backgroundColor = '#fc4c02';
+        statsBtn.style.color = '#ffffff';
+        statsBtn.style.border = 'none';
+        statsBtn.style.borderRadius = '4px';
+        statsBtn.style.padding = '6px 14px';
+        statsBtn.style.fontSize = '12px';
+        statsBtn.style.fontWeight = '600';
+        statsBtn.style.cursor = 'pointer';
+        statsBtn.style.lineHeight = '1.4';
         statsBtn.innerHTML = `
             <svg class="kudo-icon" viewBox="0 0 24 24" width="16" height="16">
                 <path fill="currentColor" d="M13 2.05v3.03c3.39.49 6 3.39 6 6.92 0 .9-.18 1.75-.48 2.54l2.6 1.53c.56-1.24.88-2.62.88-4.07 0-5.18-3.95-9.45-9-9.95zM12 19c-3.87 0-7-3.13-7-7 0-3.53 2.61-6.43 6-6.92V2.05c-5.06.5-9 4.76-9 9.95 0 5.52 4.47 10 9.99 10 3.31 0 6.24-1.61 8.01-4.09l-2.45-1.45C16.3 17.8 14.28 19 12 19z"/>
@@ -1022,9 +1058,51 @@
         btnContainer.appendChild(titleSpan);
         btnContainer.appendChild(statsBtn);
 
-        listContainer.insertBefore(btnContainer, firstAthleteItem);
+        // Find the tab bar (contains both "Kudos" and "Other Athletes") to place button right below it
+        const allModalElements = Array.from(modal.querySelectorAll('*'));
+        const kudosEl = allModalElements.find(el => {
+            const t = el.textContent.trim().toLowerCase();
+            return t === 'kudos' && el.children.length === 0;
+        });
+        const tabEl = allModalElements.find(el => {
+            const t = el.textContent.trim().toLowerCase();
+            return (t === 'other athletes' || t === 'vận động viên khác') && el.children.length === 0;
+        });
 
-        console.log('[Strava Kudo All] Injected group stats button successfully before athlete list!');
+        let tabsBar = null;
+        if (kudosEl && tabEl) {
+            let p = tabEl.parentElement;
+            while (p && p !== modal && !p.contains(kudosEl)) {
+                p = p.parentElement;
+            }
+            if (p && p !== modal) {
+                tabsBar = p;
+            }
+        }
+
+        if (!tabsBar && tabEl) {
+            tabsBar = tabEl.closest('[role="tablist"], nav, ul') || tabEl.parentElement.parentElement;
+        }
+
+        if (tabsBar && tabsBar.parentElement) {
+            if (tabsBar.nextSibling) {
+                tabsBar.parentElement.insertBefore(btnContainer, tabsBar.nextSibling);
+            } else {
+                tabsBar.parentElement.appendChild(btnContainer);
+            }
+            console.log('[Strava Kudo All] Injected group stats button successfully below tab bar!');
+        } else {
+            // Fallback: place before the first athlete row
+            const firstLink = otherAthletesLinks[0];
+            const firstRow = firstLink.closest('li, [class*="athlete"], [class*="item"], [class*="row"]')
+                || firstLink.parentElement.parentElement;
+            if (firstRow && firstRow.parentElement) {
+                firstRow.parentElement.insertBefore(btnContainer, firstRow);
+            } else {
+                modal.appendChild(btnContainer);
+            }
+            console.log('[Strava Kudo All] Injected group stats button successfully before athlete list!');
+        }
     }
 
     async function loadGroupAthletesStats(statsBtn) {

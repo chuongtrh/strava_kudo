@@ -964,46 +964,37 @@
             return;
         }
 
-        const currentActivityId = extractActivityId(window.location.pathname);
+        if (document.getElementById('kudo-load-group-stats-btn')) {
+            return;
+        }
 
-        // Find all links to other activities anywhere on the page
-        const otherAthletesLinks = Array.from(document.querySelectorAll('a[href*="/activities/"]'))
+        const modal = findOtherAthletesModal();
+        if (!modal) {
+            return;
+        }
+
+        const currentActivityId = extractActivityId(window.location.pathname);
+        const otherAthletesLinks = Array.from(modal.querySelectorAll('a[href*="/activities/"]'))
             .filter(a => {
                 const id = extractActivityId(a.href);
                 return id && id !== currentActivityId;
             });
 
-        // Find tab element for Other Athletes
-        const allElements = Array.from(document.querySelectorAll('*'));
-        const tabEl = allElements.find(el => {
+        // Check if modal currently displays Other Athletes
+        const hasOtherAthletesTab = Array.from(modal.querySelectorAll('*')).some(el => {
             const t = el.textContent.trim().toLowerCase();
             return (t === 'other athletes' || t === 'vận động viên khác') && el.children.length === 0;
         });
 
-        // Only inject if Other Athletes tab or athlete links exist
-        if (!tabEl && otherAthletesLinks.length === 0) {
+        if (!hasOtherAthletesTab && otherAthletesLinks.length === 0) {
             return;
         }
 
-        let modal = findOtherAthletesModal();
-        if (!modal) {
-            if (tabEl) {
-                modal = tabEl.closest('[role="dialog"], [class*="modal"], [class*="Modal"]') || findAncestorModal(tabEl);
-            } else if (otherAthletesLinks.length > 0) {
-                modal = otherAthletesLinks[0].closest('[role="dialog"], [class*="modal"], [class*="Modal"]') || findAncestorModal(otherAthletesLinks[0]);
-            }
-        }
+        console.log('[Strava Kudo All] Detected Other Athletes modal! Athletes count:', otherAthletesLinks.length);
 
-        if (!modal) {
-            modal = document.body;
-        }
-
-        // Avoid duplicate button if already in DOM
-        if (document.getElementById('kudo-load-group-stats-btn')) {
+        if (modal.querySelector('#kudo-group-stats-btn-wrapper')) {
             return;
         }
-
-        console.log('[Strava Kudo All] Injecting group stats button. Athletes count:', otherAthletesLinks.length);
 
         // Auto-render cached athletes
         otherAthletesLinks.forEach(link => {
@@ -1016,106 +1007,67 @@
             }
         });
 
+        // Determine insertion point
+        let listContainer = null;
+        if (otherAthletesLinks.length >= 2) {
+            let ancestor = otherAthletesLinks[0].parentElement;
+            while (ancestor && ancestor !== modal && !ancestor.contains(otherAthletesLinks[1])) {
+                ancestor = ancestor.parentElement;
+            }
+            listContainer = ancestor;
+        } else if (otherAthletesLinks.length === 1) {
+            listContainer = otherAthletesLinks[0].closest('ul, ol') || otherAthletesLinks[0].parentElement.parentElement;
+        }
+
         const btnContainer = document.createElement('div');
         btnContainer.id = 'kudo-group-stats-btn-wrapper';
         btnContainer.className = 'kudo-group-stats-btn-wrapper';
         btnContainer.style.display = 'flex';
-        btnContainer.style.justifyContent = 'space-between';
+        btnContainer.style.justifyContent = 'center';
         btnContainer.style.alignItems = 'center';
-        btnContainer.style.padding = '8px 16px';
-        btnContainer.style.margin = '8px 16px 12px 16px';
+        btnContainer.style.padding = '10px 16px';
+        btnContainer.style.margin = '8px 16px';
         btnContainer.style.background = '#fff8f5';
         btnContainer.style.border = '1px solid #ffccb8';
-        btnContainer.style.borderRadius = '6px';
-        btnContainer.style.boxSizing = 'border-box';
-
-        const countText = otherAthletesLinks.length > 0 ? ` (${otherAthletesLinks.length})` : '';
-        const titleSpan = document.createElement('span');
-        titleSpan.className = 'kudo-group-stats-title';
-        titleSpan.style.fontSize = '13px';
-        titleSpan.style.fontWeight = '600';
-        titleSpan.style.color = '#333333';
-        titleSpan.style.display = 'flex';
-        titleSpan.style.alignItems = 'center';
-        titleSpan.style.gap = '6px';
-        titleSpan.textContent = `Other Athletes${countText}`;
+        btnContainer.style.borderRadius = '8px';
 
         const statsBtn = document.createElement('button');
         statsBtn.id = 'kudo-load-group-stats-btn';
         statsBtn.className = 'kudo-group-stats-btn';
-        statsBtn.style.display = 'inline-flex';
-        statsBtn.style.alignItems = 'center';
-        statsBtn.style.justifyContent = 'center';
-        statsBtn.style.gap = '6px';
-        statsBtn.style.backgroundColor = '#fc4c02';
-        statsBtn.style.color = '#ffffff';
-        statsBtn.style.border = 'none';
-        statsBtn.style.borderRadius = '4px';
-        statsBtn.style.padding = '6px 14px';
-        statsBtn.style.fontSize = '12px';
-        statsBtn.style.fontWeight = '600';
-        statsBtn.style.cursor = 'pointer';
-        statsBtn.style.lineHeight = '1.4';
+        statsBtn.style.margin = '0';
         statsBtn.innerHTML = `
             <svg class="kudo-icon" viewBox="0 0 24 24" width="16" height="16">
                 <path fill="currentColor" d="M13 2.05v3.03c3.39.49 6 3.39 6 6.92 0 .9-.18 1.75-.48 2.54l2.6 1.53c.56-1.24.88-2.62.88-4.07 0-5.18-3.95-9.45-9-9.95zM12 19c-3.87 0-7-3.13-7-7 0-3.53 2.61-6.43 6-6.92V2.05c-5.06.5-9 4.76-9 9.95 0 5.52 4.47 10 9.99 10 3.31 0 6.24-1.61 8.01-4.09l-2.45-1.45C16.3 17.8 14.28 19 12 19z"/>
             </svg>
-            <span>⚡ Load Athlete Stats</span>
+            <span>⚡ Load Athlete Stats (${otherAthletesLinks.length > 0 ? otherAthletesLinks.length + ' athletes' : 'All'})</span>
         `;
 
         statsBtn.onclick = (e) => {
             e.preventDefault();
             e.stopPropagation();
-            loadGroupAthletesStats(statsBtn);
+            loadGroupAthletesStats(modal, statsBtn);
         };
 
-        btnContainer.appendChild(titleSpan);
         btnContainer.appendChild(statsBtn);
 
-        // Clean insertion: Always insert as direct block child in modal card
-        let targetCard = modal;
-        while (targetCard && targetCard.children.length === 1 && targetCard.children[0].tagName === 'DIV') {
-            targetCard = targetCard.children[0];
-        }
-
-        let inserted = false;
-
-        // Strategy 1: Place directly after the header inside the modal card
-        if (targetCard && targetCard !== document.body && targetCard.children.length >= 2) {
-            const headerIndex = Array.from(targetCard.children).findIndex(child => {
-                return child.querySelector('button[aria-label*="close" i], button[class*="close" i]')
-                    || Array.from(child.querySelectorAll('button')).some(b => b.textContent.trim() === '✕' || b.textContent.trim() === '×')
-                    || child.querySelector('h1, h2, h3, [class*="title" i], [class*="heading" i]')
-                    || child.textContent.includes('2026') || child.textContent.includes('Run');
+        // Insert before listContainer or right below tabs
+        if (listContainer && listContainer !== modal && listContainer.parentElement) {
+            listContainer.parentElement.insertBefore(btnContainer, listContainer);
+        } else {
+            const tabsNav = Array.from(modal.querySelectorAll('nav, [role="tablist"], div')).find(el => {
+                return Array.from(el.querySelectorAll('*')).some(c => c.textContent.trim().toLowerCase() === 'other athletes');
             });
-
-            if (headerIndex !== -1 && headerIndex + 1 <= targetCard.children.length) {
-                targetCard.insertBefore(btnContainer, targetCard.children[headerIndex + 1]);
-                inserted = true;
-                console.log('[Strava Kudo All] Injected group stats banner after header child index:', headerIndex);
+            if (tabsNav && tabsNav.nextSibling) {
+                tabsNav.parentElement.insertBefore(btnContainer, tabsNav.nextSibling);
             } else {
-                targetCard.insertBefore(btnContainer, targetCard.children[1]);
-                inserted = true;
-                console.log('[Strava Kudo All] Injected group stats banner as child[1] of modal card!');
+                modal.prepend(btnContainer);
             }
         }
 
-        // Strategy 2: Prepend to targetCard
-        if (!inserted && targetCard && targetCard !== document.body) {
-            targetCard.prepend(btnContainer);
-            inserted = true;
-            console.log('[Strava Kudo All] Injected group stats banner prepended to targetCard!');
-        }
-
-        // Strategy 3: Prepend to modal
-        if (!inserted && modal && modal !== document.body) {
-            modal.prepend(btnContainer);
-            inserted = true;
-            console.log('[Strava Kudo All] Injected group stats banner prepended to modal!');
-        }
+        console.log('[Strava Kudo All] Injected group stats button successfully!');
     }
 
-    async function loadGroupAthletesStats(statsBtn) {
+    async function loadGroupAthletesStats(modal, statsBtn) {
         if (!statsBtn) return;
 
         // Check if user clicked Refresh to force re-fetch

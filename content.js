@@ -1072,40 +1072,46 @@
         btnContainer.appendChild(titleSpan);
         btnContainer.appendChild(statsBtn);
 
-        // Insertion Strategy:
-        // Priority 1: Directly below the tab bar
+        // Clean insertion: Always insert as direct block child in modal card
+        let targetCard = modal;
+        while (targetCard && targetCard.children.length === 1 && targetCard.children[0].tagName === 'DIV') {
+            targetCard = targetCard.children[0];
+        }
+
         let inserted = false;
-        if (tabEl) {
-            const tabBar = tabEl.closest('[role="tablist"], nav, ul') || tabEl.parentElement;
-            if (tabBar && tabBar !== modal && tabBar !== document.body && tabBar.parentElement) {
-                if (tabBar.nextElementSibling) {
-                    tabBar.parentElement.insertBefore(btnContainer, tabBar.nextElementSibling);
-                } else {
-                    tabBar.after(btnContainer);
-                }
+
+        // Strategy 1: Place directly after the header inside the modal card
+        if (targetCard && targetCard !== document.body && targetCard.children.length >= 2) {
+            const headerIndex = Array.from(targetCard.children).findIndex(child => {
+                return child.querySelector('button[aria-label*="close" i], button[class*="close" i]')
+                    || Array.from(child.querySelectorAll('button')).some(b => b.textContent.trim() === '✕' || b.textContent.trim() === '×')
+                    || child.querySelector('h1, h2, h3, [class*="title" i], [class*="heading" i]')
+                    || child.textContent.includes('2026') || child.textContent.includes('Run');
+            });
+
+            if (headerIndex !== -1 && headerIndex + 1 <= targetCard.children.length) {
+                targetCard.insertBefore(btnContainer, targetCard.children[headerIndex + 1]);
                 inserted = true;
-                console.log('[Strava Kudo All] Injected group stats banner below tab bar!');
+                console.log('[Strava Kudo All] Injected group stats banner after header child index:', headerIndex);
+            } else {
+                targetCard.insertBefore(btnContainer, targetCard.children[1]);
+                inserted = true;
+                console.log('[Strava Kudo All] Injected group stats banner as child[1] of modal card!');
             }
         }
 
-        // Priority 2: Directly after modal header (as direct child of modal)
-        if (!inserted && modal && modal !== document.body && modal.children.length > 1) {
-            modal.insertBefore(btnContainer, modal.children[1]);
+        // Strategy 2: Prepend to targetCard
+        if (!inserted && targetCard && targetCard !== document.body) {
+            targetCard.prepend(btnContainer);
             inserted = true;
-            console.log('[Strava Kudo All] Injected group stats banner after modal header!');
+            console.log('[Strava Kudo All] Injected group stats banner prepended to targetCard!');
         }
 
-        // Priority 3: Prepend to modal
+        // Strategy 3: Prepend to modal
         if (!inserted && modal && modal !== document.body) {
             modal.prepend(btnContainer);
             inserted = true;
             console.log('[Strava Kudo All] Injected group stats banner prepended to modal!');
-        }
-
-        // Priority 4: Fallback prepend to body
-        if (!inserted) {
-            document.body.prepend(btnContainer);
-            console.log('[Strava Kudo All] Injected group stats banner into body fallback!');
         }
     }
 

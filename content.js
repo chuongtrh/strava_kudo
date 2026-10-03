@@ -933,37 +933,57 @@
                 return id && id !== currentActivityId;
             });
 
-        // Filter to visible links (inside the open modal)
-        const visibleLinks = otherAthletesLinks.filter(a => {
-            return a.offsetParent !== null || a.getClientRects().length > 0;
-        });
-
-        if (visibleLinks.length === 0) {
+        if (otherAthletesLinks.length === 0) {
             return;
         }
 
-        const firstLink = visibleLinks[0];
-        const firstRow = firstLink.closest('li, [class*="athlete"], [class*="item"], [class*="row"]')
-            || firstLink.parentElement.parentElement;
+        // Find the list container and the first athlete item
+        let listContainer = null;
+        let firstAthleteItem = null;
 
-        if (!firstRow || !firstRow.parentElement) {
+        if (otherAthletesLinks.length >= 2) {
+            const link0 = otherAthletesLinks[0];
+            const link1 = otherAthletesLinks[1];
+
+            let ancestor = link0.parentElement;
+            while (ancestor && ancestor !== document.body && !ancestor.contains(link1)) {
+                ancestor = ancestor.parentElement;
+            }
+
+            if (ancestor && ancestor !== document.body) {
+                listContainer = ancestor;
+                let curr = link0;
+                while (curr && curr.parentElement !== listContainer) {
+                    curr = curr.parentElement;
+                }
+                firstAthleteItem = curr;
+            }
+        }
+
+        if (!listContainer || !firstAthleteItem) {
+            const firstLink = otherAthletesLinks[0];
+            firstAthleteItem = firstLink.closest('li, [class*="athlete"], [class*="item"], [class*="row"]')
+                || firstLink.parentElement.parentElement;
+            listContainer = firstAthleteItem ? firstAthleteItem.parentElement : firstLink.parentElement;
+        }
+
+        if (!listContainer || !firstAthleteItem) {
             return;
         }
 
-        // Clean up any old wrapper not placed right before firstRow
-        const oldWrapper = document.getElementById('kudo-group-stats-btn-wrapper');
-        if (oldWrapper) {
-            if (oldWrapper.nextElementSibling === firstRow) {
-                // Already in perfect position
+        // Check if button wrapper is already in position inside listContainer
+        const existingWrapper = document.getElementById('kudo-group-stats-btn-wrapper');
+        if (existingWrapper) {
+            if (listContainer.contains(existingWrapper)) {
                 return;
             }
-            oldWrapper.remove();
+            existingWrapper.remove();
         }
 
-        console.log('[Strava Kudo All] Found visible athlete rows:', visibleLinks.length);
+        console.log('[Strava Kudo All] Found athlete links in group:', otherAthletesLinks.length);
 
         // Auto-render cached athletes
-        visibleLinks.forEach(link => {
+        otherAthletesLinks.forEach(link => {
             const actId = extractActivityId(link.href);
             if (actId && groupStatsCache.has(actId)) {
                 const row = link.closest('li, [class*="athlete"], [class*="item"], [class*="row"]') || link.parentElement;
@@ -973,13 +993,15 @@
             }
         });
 
-        const btnContainer = document.createElement('div');
+        const isList = listContainer.tagName.toUpperCase() === 'UL' || listContainer.tagName.toUpperCase() === 'OL';
+        const btnContainer = document.createElement(isList ? 'li' : 'div');
         btnContainer.id = 'kudo-group-stats-btn-wrapper';
         btnContainer.className = 'kudo-group-stats-btn-wrapper';
+        btnContainer.style.listStyle = 'none';
 
         const titleSpan = document.createElement('span');
         titleSpan.className = 'kudo-group-stats-title';
-        titleSpan.textContent = `Other Athletes (${visibleLinks.length})`;
+        titleSpan.textContent = `Other Athletes (${otherAthletesLinks.length})`;
 
         const statsBtn = document.createElement('button');
         statsBtn.id = 'kudo-load-group-stats-btn';
@@ -1000,9 +1022,9 @@
         btnContainer.appendChild(titleSpan);
         btnContainer.appendChild(statsBtn);
 
-        // Insert right before the first athlete row
-        firstRow.parentElement.insertBefore(btnContainer, firstRow);
-        console.log('[Strava Kudo All] Injected group stats banner before first athlete row!');
+        listContainer.insertBefore(btnContainer, firstAthleteItem);
+
+        console.log('[Strava Kudo All] Injected group stats button successfully before athlete list!');
     }
 
     async function loadGroupAthletesStats(statsBtn) {
@@ -1020,7 +1042,7 @@
         const links = Array.from(document.querySelectorAll('a[href*="/activities/"]'))
             .filter(a => {
                 const id = extractActivityId(a.href);
-                return id && id !== currentActivityId && (a.offsetParent !== null || a.getClientRects().length > 0);
+                return id && id !== currentActivityId;
             });
 
         if (links.length === 0) {

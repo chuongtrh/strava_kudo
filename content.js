@@ -956,7 +956,7 @@
             }
             curr = curr.parentElement;
         }
-        return el.parentElement;
+        return el ? el.parentElement : null;
     }
 
     function checkAndInjectGroupStatsButton() {
@@ -964,33 +964,46 @@
             return;
         }
 
-        const modal = findOtherAthletesModal();
-        if (!modal) {
-            return;
-        }
-
         const currentActivityId = extractActivityId(window.location.pathname);
-        const otherAthletesLinks = Array.from(modal.querySelectorAll('a[href*="/activities/"]'))
+
+        // Find all links to other activities anywhere on the page
+        const otherAthletesLinks = Array.from(document.querySelectorAll('a[href*="/activities/"]'))
             .filter(a => {
                 const id = extractActivityId(a.href);
                 return id && id !== currentActivityId;
             });
 
-        // If not on Other Athletes tab (no athlete links), remove any misplaced wrapper
-        if (otherAthletesLinks.length === 0) {
-            const existingWrapper = modal.querySelector('#kudo-group-stats-btn-wrapper');
-            if (existingWrapper) {
-                existingWrapper.remove();
+        // Find tab element for Other Athletes
+        const allElements = Array.from(document.querySelectorAll('*'));
+        const tabEl = allElements.find(el => {
+            const t = el.textContent.trim().toLowerCase();
+            return (t === 'other athletes' || t === 'vận động viên khác') && el.children.length === 0;
+        });
+
+        // Only inject if Other Athletes tab or athlete links exist
+        if (!tabEl && otherAthletesLinks.length === 0) {
+            return;
+        }
+
+        let modal = findOtherAthletesModal();
+        if (!modal) {
+            if (tabEl) {
+                modal = tabEl.closest('[role="dialog"], [class*="modal"], [class*="Modal"]') || findAncestorModal(tabEl);
+            } else if (otherAthletesLinks.length > 0) {
+                modal = otherAthletesLinks[0].closest('[role="dialog"], [class*="modal"], [class*="Modal"]') || findAncestorModal(otherAthletesLinks[0]);
             }
+        }
+
+        if (!modal) {
+            modal = document.body;
+        }
+
+        // Avoid duplicate button if already in DOM
+        if (document.getElementById('kudo-load-group-stats-btn')) {
             return;
         }
 
-        // Avoid duplicate button if already in position inside modal
-        if (modal.querySelector('#kudo-group-stats-btn-wrapper')) {
-            return;
-        }
-
-        console.log('[Strava Kudo All] Found athlete links in group modal:', otherAthletesLinks.length);
+        console.log('[Strava Kudo All] Injecting group stats button. Athletes count:', otherAthletesLinks.length);
 
         // Auto-render cached athletes
         otherAthletesLinks.forEach(link => {
@@ -1016,6 +1029,7 @@
         btnContainer.style.borderRadius = '6px';
         btnContainer.style.boxSizing = 'border-box';
 
+        const countText = otherAthletesLinks.length > 0 ? ` (${otherAthletesLinks.length})` : '';
         const titleSpan = document.createElement('span');
         titleSpan.className = 'kudo-group-stats-title';
         titleSpan.style.fontSize = '13px';
@@ -1024,7 +1038,7 @@
         titleSpan.style.display = 'flex';
         titleSpan.style.alignItems = 'center';
         titleSpan.style.gap = '6px';
-        titleSpan.textContent = `Other Athletes (${otherAthletesLinks.length})`;
+        titleSpan.textContent = `Other Athletes${countText}`;
 
         const statsBtn = document.createElement('button');
         statsBtn.id = 'kudo-load-group-stats-btn';
@@ -1058,50 +1072,64 @@
         btnContainer.appendChild(titleSpan);
         btnContainer.appendChild(statsBtn);
 
-        // Find the tab bar (contains both "Kudos" and "Other Athletes") to place button right below it
-        const allModalElements = Array.from(modal.querySelectorAll('*'));
-        const kudosEl = allModalElements.find(el => {
-            const t = el.textContent.trim().toLowerCase();
-            return t === 'kudos' && el.children.length === 0;
-        });
-        const tabEl = allModalElements.find(el => {
-            const t = el.textContent.trim().toLowerCase();
-            return (t === 'other athletes' || t === 'vận động viên khác') && el.children.length === 0;
-        });
-
-        let tabsBar = null;
-        if (kudosEl && tabEl) {
-            let p = tabEl.parentElement;
-            while (p && p !== modal && !p.contains(kudosEl)) {
-                p = p.parentElement;
+        // Insertion Strategy:
+        // Priority 1: Right below the tab bar
+        let inserted = false;
+        if (tabEl) {
+            let tabContainer = tabEl.closest('[role="tablist"], nav, ul');
+            if (!tabContainer) {
+                let p = tabEl.parentElement;
+                while (p && p !== modal && p !== document.body) {
+                    const text = p.textContent.toLowerCase();
+                    if (text.includes('kudos') || text.includes('comments')) {
+                        tabContainer = p;
+                        break;
+                    }
+                    p = p.parentElement;
+                }
             }
-            if (p && p !== modal) {
-                tabsBar = p;
+
+            if (tabContainer && tabContainer !== modal && tabContainer.parentElement) {
+                if (tabContainer.nextSibling) {
+                    tabContainer.parentElement.insertBefore(btnContainer, tabContainer.nextSibling);
+                } else {
+                    tabContainer.parentElement.appendChild(btnContainer);
+                }
+                inserted = true;
+                console.log('[Strava Kudo All] Injected group stats button successfully below tab bar!');
             }
         }
 
-        if (!tabsBar && tabEl) {
-            tabsBar = tabEl.closest('[role="tablist"], nav, ul') || tabEl.parentElement.parentElement;
-        }
-
-        if (tabsBar && tabsBar.parentElement) {
-            if (tabsBar.nextSibling) {
-                tabsBar.parentElement.insertBefore(btnContainer, tabsBar.nextSibling);
-            } else {
-                tabsBar.parentElement.appendChild(btnContainer);
-            }
-            console.log('[Strava Kudo All] Injected group stats button successfully below tab bar!');
-        } else {
-            // Fallback: place before the first athlete row
+        // Priority 2: Before the first athlete row
+        if (!inserted && otherAthletesLinks.length > 0) {
             const firstLink = otherAthletesLinks[0];
             const firstRow = firstLink.closest('li, [class*="athlete"], [class*="item"], [class*="row"]')
                 || firstLink.parentElement.parentElement;
             if (firstRow && firstRow.parentElement) {
                 firstRow.parentElement.insertBefore(btnContainer, firstRow);
-            } else {
-                modal.appendChild(btnContainer);
+                inserted = true;
+                console.log('[Strava Kudo All] Injected group stats button successfully before athlete list!');
             }
-            console.log('[Strava Kudo All] Injected group stats button successfully before athlete list!');
+        }
+
+        // Priority 3: Before Leave Group button
+        if (!inserted) {
+            const allBtns = Array.from(modal.querySelectorAll('button, a'));
+            const leaveGroupBtn = allBtns.find(el => {
+                const t = el.textContent.trim().toLowerCase();
+                return t === 'leave group' || t === 'rời khỏi nhóm';
+            });
+            if (leaveGroupBtn && leaveGroupBtn.parentElement) {
+                leaveGroupBtn.parentElement.insertBefore(btnContainer, leaveGroupBtn);
+                inserted = true;
+                console.log('[Strava Kudo All] Injected group stats button before Leave Group button!');
+            }
+        }
+
+        // Priority 4: Prepend to modal (guaranteed fallback from original working version)
+        if (!inserted) {
+            modal.prepend(btnContainer);
+            console.log('[Strava Kudo All] Injected group stats button prepended to modal!');
         }
     }
 
